@@ -8,11 +8,20 @@ Live MIPI-CSI camera video from an ESP32-P4 + Raspberry Pi Camera v2 (IMX219), c
 
 *A real frame streamed over USB at 720p, with ISP white balance and gain tuned for indoor lighting.*
 
+### Before / after ISP tuning
+
+Same scene, same firmware structure — the ISP tuning (white balance, gamma tone curve, denoise) applied:
+
+| Before | After |
+|---|---|
+| ![Before tuning](docs/before_tuning.jpg) | ![After tuning](docs/after_tuning.jpg) |
+| Purple/magenta cast (B/G = 1.48), crushed blacks (median luma 33), heavy chroma noise | Neutral color (B/G = 0.89), natural exposure (median luma 58), denoised shadows |
+
 ## Features
 
 - **Hardware JPEG encoding** on the ESP32-P4 — RGB565 frames from the V4L2 capture pipeline are compressed on-chip (quality 75, YUV422) before transmission over USB CDC serial at **2,000,000 baud**
 - **Custom IMX219 sensor driver** included — registers the Raspberry Pi Camera v2 through Espressif's `esp_cam_sensor` detection API (the stock ESP32 Arduino core does not ship an IMX219 driver for the P4 CSI path)
-- **ISP tuning from the sketch** — white balance gains, analog gain and exposure are set over V4L2 controls to kill the raw Bayer green cast and brighten indoor shots
+- **ISP tuning from the sketch** — white balance gains, a gamma tone curve, Bayer denoising, analog gain and exposure are all set over V4L2 controls to kill the raw Bayer green cast, clean shadow noise, and brighten indoor shots
 - **Two viewers included**:
   - `viewers/viewer.html` — Web Serial API, runs in Chrome/Edge with **no installation at all**
   - `viewers/viewer.py` — OpenCV desktop window with FPS overlay
@@ -104,7 +113,10 @@ The firmware currently emits `format = 2` (JPEG). Both viewers resynchronize on 
 
 1. **Sensor bring-up** — `sensor_detect.c` implements Espressif's `esp_cam_sensor_detect_get_array()` hook, registering the IMX219 driver (`imx219.c`) with the `esp_cam_sensor` framework so the ESP_Video stack can probe the camera over SCCB. This is necessary because the precompiled ESP32-P4 Arduino libraries contain no IMX219 support.
 2. **Capture** — the sketch opens `/dev/video0` (MIPI CSI) through the `ESP_Video` API and captures RGB565 frames.
-3. **ISP tuning** — white balance gains (R=2.4, B=2.0) are pushed via the `V4L2_CID_USER_ESP_ISP_WB` control, AGC is enabled, and sensor analog gain (34 ≈ 7.1×) plus exposure (1750 lines) are set for indoor lighting.
+3. **ISP tuning** — white balance gains (R=2.2, B=1.25) go in via the `V4L2_CID_USER_ESP_ISP_WB` control to remove the purple/green cast, a 16-point **gamma curve** lifts the crushed indoor midtones, and the **Bayer denoiser** (level 10) cleans the shadow noise that the lift would otherwise expose. Sensor analog gain (34 ≈ 7.1×) and exposure (1750 lines) are set manually at the sensor's ceiling.
+
+   > [!NOTE]
+   > The `esp_video_isp_pipeline_set_agc_status()` AGC pipeline was tested (with and without ISP AE statistics) and is **inert in this Arduino core build** — without manual gain/exposure the sensor falls back to its dark defaults. Manual control is therefore used.
 4. **Encode** — each frame is compressed by the P4's **hardware JPEG encoder** into a 512 KB DMA buffer.
 5. **Stream** — the `CAM0` header + JPEG payload are written to USB CDC serial.
 
@@ -112,10 +124,12 @@ The firmware currently emits `format = 2` (JPEG). Both viewers resynchronize on 
 
 All in `esp32p4_cam_test/esp32p4_cam_test.ino`:
 
-- `configure_isp_color()` — `red_gain` / `blue_gain` correct color casts (raise red for warm/indoor light)
+- `configure_isp_color()` — `red_gain` / `blue_gain` correct color casts (current: R=2.2, B=1.25; the stock-looking B=2.0 produced purple shadows)
+- `configure_isp_gamma()` — tone curve; `kY[]` maps input→output levels. The hardware requires `x[0] > 0`, every X step a power of two, and `x[15] = 255`. Raise the mid entries for a brighter image, lower the low entries for deeper blacks
+- `configure_isp_denoise()` — Bayer filter level 10 in `[2, 20]`; kernel taps must stay in `[0, 15]`
 - `setSensorGain(34)` — analog gain index, range 0–41; lower for bright scenes to reduce noise
-- `setSensorExposure(1750)` — exposure in lines; near the 1759-line frame maximum at 720p
-- `image_quality = 75` — JPEG quality; raise for sharpness at the cost of USB bandwidth
+- `setSensorExposure(1750)` — exposure in lines; near the 1759-line frame maximum at 720p/15 FPS
+- `image_quality = 75` — JPEG quality; raise for sharpness at the cost of USB bandwidth (~6 FPS at 90 vs ~15 FPS at 75)
 
 ## Repository layout
 
@@ -127,7 +141,9 @@ All in `esp32p4_cam_test/esp32p4_cam_test.ino`:
 ├── viewers/
 │   ├── viewer.html            Web Serial browser viewer (zero install)
 │   └── viewer.py              OpenCV desktop viewer
-└── docs/                      sample frames
+├── tools/
+│   └── capture.py             grab a single frame from the stream (for tuning)
+└── docs/                      sample frames + before/after tuning shots
 ```
 
 ## License

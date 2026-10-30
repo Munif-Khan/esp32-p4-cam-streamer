@@ -82,7 +82,8 @@ void configure_isp_gamma() {
   // Y is a gentle S-curve with a soft toe: mild lift for deep shadows (no hazy
   // black floor), ~1.6-1.8x for midtones, near-unity for highlights so bright
   // areas do not bleach. Maps the indoor scene toward daylight-photo levels.
-  static const uint8_t kY[16] = {3, 6, 11, 20, 34, 54, 104, 166, 191, 214, 233, 243, 248, 251, 253, 255};
+  // (Pulled back from the first version per feedback: blacks were too washed.)
+  static const uint8_t kY[16] = {2, 5, 8, 15, 26, 41, 78, 141, 162, 182, 219, 229, 234, 240, 248, 255};
   esp_video_isp_gamma_t gamma = {};
   gamma.enable = true;
   for (int i = 0; i < 16; i++) {
@@ -106,36 +107,6 @@ void configure_isp_gamma() {
       Serial.println("ISP gamma enabled (0.42 lift)");
     } else {
       Serial.printf("Notice: ISP gamma set failed (errno=%d)\n", errno);
-    }
-    ::close(isp_fd);
-  }
-}
-
-// Enable ISP auto-exposure statistics so the AGC pipeline controller has data
-// to drive sensor gain/exposure. Without this, AGC has no AE feed and the
-// sensor falls back to its dark defaults.
-void configure_isp_ae_stats() {
-  esp_video_isp_ae_t ae = {
-    .enable = true,
-    .windows = {},   // right=0/bottom=0 -> default full-frame window
-  };
-
-  struct v4l2_ext_control ctrl = {};
-  ctrl.id = V4L2_CID_USER_ESP_ISP_AE;
-  ctrl.size = sizeof(ae);
-  ctrl.p_u8 = (uint8_t *)&ae;
-
-  struct v4l2_ext_controls ctrls = {};
-  ctrls.ctrl_class = V4L2_CTRL_CLASS_USER;
-  ctrls.count = 1;
-  ctrls.controls = &ctrl;
-
-  int isp_fd = ::open(ESP_VIDEO_ISP1_DEVICE_NAME, O_RDWR);
-  if (isp_fd >= 0) {
-    if (::ioctl(isp_fd, VIDIOC_S_EXT_CTRLS, &ctrls) == 0) {
-      Serial.println("ISP AE statistics enabled on /dev/video20");
-    } else {
-      Serial.printf("Notice: enabling ISP AE statistics failed (errno=%d)\n", errno);
     }
     ::close(isp_fd);
   }
@@ -258,7 +229,7 @@ void loop() {
     .width = (uint32_t)buffer.getWidth(),
     .src_type = JPEG_ENCODE_IN_FORMAT_RGB565,
     .sub_sample = JPEG_DOWN_SAMPLING_YUV422,
-    .image_quality = 90,
+    .image_quality = 75,
     .pixel_reverse = false,
   };
 
