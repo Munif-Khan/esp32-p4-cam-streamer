@@ -1,0 +1,21 @@
+# Arduino build artifacts
+build/
+*.bin
+*.elf
+*.map
+*.o
+*.d
+
+# Local IDE / CLI config (machine-specific paths)
+arduino-cli.yaml
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Third-party board schematics (copyrighted by original designer) - kept locally only
+docs/page1_full.png
+docs/j2_crop.png

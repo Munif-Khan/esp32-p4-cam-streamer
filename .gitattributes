@@ -1,0 +1,9 @@
+# Normalize line endings for cross-platform users
+* text=auto eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.bin binary
+*.elf binary
