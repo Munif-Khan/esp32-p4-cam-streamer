@@ -31,10 +31,12 @@ struct __attribute__((packed)) FrameHeader {
 
 // Apply ISP White Balance gains to eliminate the raw Bayer green cast
 void configure_isp_color() {
+  // Measured against a reference photo of the same scene: the previous gains
+  // (R=2.4, B=2.0) starved the green channel, producing a magenta/purple cast.
   esp_video_isp_wb_t wb = {
     .enable = true,
-    .red_gain = 2.4f,   // Boost Red channel
-    .blue_gain = 2.0f,  // Boost Blue channel
+    .red_gain = 2.2f,   // restores the scene's rich reds (magenta was blue, not red)
+    .blue_gain = 1.25f, // was 2.0 - caused purple shadows
   };
 
   struct v4l2_ext_control ctrl = {};
@@ -51,7 +53,7 @@ void configure_isp_color() {
   int fd = ::open(ESP_VIDEO_MIPI_CSI_DEVICE_NAME, O_RDWR);
   if (fd >= 0) {
     if (::ioctl(fd, VIDIOC_S_EXT_CTRLS, &ctrls) == 0) {
-      Serial.println("ISP White Balance configured on /dev/video0 (R=2.4, B=2.0)");
+      Serial.printf("ISP White Balance configured on /dev/video0 (R=%.2f, B=%.2f)\n", wb.red_gain, wb.blue_gain);
     } else {
       Serial.println("Notice: VIDIOC_S_EXT_CTRLS on /dev/video0 failed, trying ISP device");
     }
@@ -62,7 +64,109 @@ void configure_isp_color() {
   int isp_fd = ::open(ESP_VIDEO_ISP1_DEVICE_NAME, O_RDWR);
   if (isp_fd >= 0) {
     if (::ioctl(isp_fd, VIDIOC_S_EXT_CTRLS, &ctrls) == 0) {
-      Serial.println("ISP White Balance configured on /dev/video20 (R=2.4, B=2.0)");
+      Serial.printf("ISP White Balance configured on /dev/video20 (R=%.2f, B=%.2f)\n", wb.red_gain, wb.blue_gain);
+    }
+    ::close(isp_fd);
+  }
+}
+
+// Enable ISP gamma correction to lift crushed midtones (the room is dim and
+// the sensor is already near its exposure ceiling; a gamma < 1.0 expands the
+// dark range without clipping highlights).
+void configure_isp_gamma() {
+  // Hardware constraint (esp-idf isp_gamma.c): pt[0].x must be > 0, every X
+  // step must be a power of two, and pt[15].x must be exactly 255.
+  // X:      1    2    4    8   16   32   64  128  160  192  224  240  248  252  254  255
+  // steps:    1    2    4    8   16   32   64   32   32   32   16    8    4    2    (2)*  (*256-254)
+  static const uint8_t kX[16] = {1, 2, 4, 8, 16, 32, 64, 128, 160, 192, 224, 240, 248, 252, 254, 255};
+  // Y is a gentle S-curve with a soft toe: mild lift for deep shadows (no hazy
+  // black floor), ~1.6-1.8x for midtones, near-unity for highlights so bright
+  // areas do not bleach. Maps the indoor scene toward daylight-photo levels.
+  static const uint8_t kY[16] = {3, 6, 11, 20, 34, 54, 104, 166, 191, 214, 233, 243, 248, 251, 253, 255};
+  esp_video_isp_gamma_t gamma = {};
+  gamma.enable = true;
+  for (int i = 0; i < 16; i++) {
+    gamma.points[i].x = kX[i];
+    gamma.points[i].y = kY[i];
+  }
+
+  struct v4l2_ext_control ctrl = {};
+  ctrl.id = V4L2_CID_USER_ESP_ISP_GAMMA;
+  ctrl.size = sizeof(gamma);
+  ctrl.p_u8 = (uint8_t *)&gamma;
+
+  struct v4l2_ext_controls ctrls = {};
+  ctrls.ctrl_class = V4L2_CTRL_CLASS_USER;
+  ctrls.count = 1;
+  ctrls.controls = &ctrl;
+
+  int isp_fd = ::open(ESP_VIDEO_ISP1_DEVICE_NAME, O_RDWR);
+  if (isp_fd >= 0) {
+    if (::ioctl(isp_fd, VIDIOC_S_EXT_CTRLS, &ctrls) == 0) {
+      Serial.println("ISP gamma enabled (0.42 lift)");
+    } else {
+      Serial.printf("Notice: ISP gamma set failed (errno=%d)\n", errno);
+    }
+    ::close(isp_fd);
+  }
+}
+
+// Enable ISP auto-exposure statistics so the AGC pipeline controller has data
+// to drive sensor gain/exposure. Without this, AGC has no AE feed and the
+// sensor falls back to its dark defaults.
+void configure_isp_ae_stats() {
+  esp_video_isp_ae_t ae = {
+    .enable = true,
+    .windows = {},   // right=0/bottom=0 -> default full-frame window
+  };
+
+  struct v4l2_ext_control ctrl = {};
+  ctrl.id = V4L2_CID_USER_ESP_ISP_AE;
+  ctrl.size = sizeof(ae);
+  ctrl.p_u8 = (uint8_t *)&ae;
+
+  struct v4l2_ext_controls ctrls = {};
+  ctrls.ctrl_class = V4L2_CTRL_CLASS_USER;
+  ctrls.count = 1;
+  ctrls.controls = &ctrl;
+
+  int isp_fd = ::open(ESP_VIDEO_ISP1_DEVICE_NAME, O_RDWR);
+  if (isp_fd >= 0) {
+    if (::ioctl(isp_fd, VIDIOC_S_EXT_CTRLS, &ctrls) == 0) {
+      Serial.println("ISP AE statistics enabled on /dev/video20");
+    } else {
+      Serial.printf("Notice: enabling ISP AE statistics failed (errno=%d)\n", errno);
+    }
+    ::close(isp_fd);
+  }
+}
+
+// Enable ISP Bayer-domain denoising to clean up chroma noise that the gamma
+// lift makes visible in shadows.
+void configure_isp_denoise() {
+  esp_video_isp_bf_t bf = {};
+  bf.enable = true;
+  bf.level = 10;   // allowed range [2, 20]
+  // Center-weighted smoothing kernel, all taps in [0, 15]
+  const uint8_t kKernel[3][3] = {{1, 2, 1}, {2, 4, 2}, {1, 2, 1}};
+  memcpy(bf.matrix, kKernel, sizeof(kKernel));
+
+  struct v4l2_ext_control ctrl = {};
+  ctrl.id = V4L2_CID_USER_ESP_ISP_BF;
+  ctrl.size = sizeof(bf);
+  ctrl.p_u8 = (uint8_t *)&bf;
+
+  struct v4l2_ext_controls ctrls = {};
+  ctrls.ctrl_class = V4L2_CTRL_CLASS_USER;
+  ctrls.count = 1;
+  ctrls.controls = &ctrl;
+
+  int isp_fd = ::open(ESP_VIDEO_ISP1_DEVICE_NAME, O_RDWR);
+  if (isp_fd >= 0) {
+    if (::ioctl(isp_fd, VIDIOC_S_EXT_CTRLS, &ctrls) == 0) {
+      Serial.println("ISP Bayer denoise enabled (level 10)");
+    } else {
+      Serial.printf("Notice: ISP denoise set failed (errno=%d)\n", errno);
     }
     ::close(isp_fd);
   }
@@ -119,14 +223,16 @@ void setup() {
   // Configure ISP White Balance
   configure_isp_color();
 
-  // Try enabling ISP AGC pipeline
-  esp_video_isp_pipeline_set_agc_status(ESP_VIDEO_ISP_PIPELINE_AGC_ENABLE);
-
-  // Set sensor analog gain and exposure for indoor lighting
-  // Gain index 34 = ~7.1x analog gain (range 0..41, default was 9=1.68x)
+  // Deterministic exposure: manual sensor control at the top of its range
+  // (AGC was tried but has no effect in this Arduino build - the sensor just
+  // falls back to its dark defaults), then lift midtones with ISP gamma.
+  esp_video_isp_pipeline_set_agc_status(ESP_VIDEO_ISP_PIPELINE_AGC_DISABLE);
+  // Gain index 34 = ~7.1x analog gain (41 washed highlights out)
   capture_dev.setSensorGain(34);
-  // Exposure 1750 lines (near max frame exposure of 1759 lines)
+  // Exposure near max frame exposure (1759 lines at 720p/15fps)
   capture_dev.setSensorExposure(1750);
+  configure_isp_gamma();
+  configure_isp_denoise();
 
   if (!capture_dev.startCapture()) {
     Serial.println("FAIL: startCapture");
@@ -152,7 +258,7 @@ void loop() {
     .width = (uint32_t)buffer.getWidth(),
     .src_type = JPEG_ENCODE_IN_FORMAT_RGB565,
     .sub_sample = JPEG_DOWN_SAMPLING_YUV422,
-    .image_quality = 75,
+    .image_quality = 90,
     .pixel_reverse = false,
   };
 
