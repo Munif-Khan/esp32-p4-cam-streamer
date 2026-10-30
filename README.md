@@ -149,6 +149,13 @@ All in `esp32p4_cam_test/esp32p4_cam_test.ino`:
 - Project code: [MIT](LICENSE)
 - `esp32p4_cam_test/imx219*.c/h` and `sensor_detect.c`: **Apache-2.0** (derived from Espressif's `esp_cam_sensor` IMX driver work — see file headers)
 
+## Contributions
+
+This project was developed with significant AI assistance:
+
+- **Gemini 3.8** (Google) — initial development of the camera streaming project
+- **MiMo** (Xiaomi) — live hardware ISP tuning, reverse-engineering the ESP32-P4 gamma/denoise hardware constraints, and documentation
+
 ## Acknowledgments
 
 - Espressif for the ESP32-P4 `esp_cam_sensor` / `ESP_Video` stack and the Arduino ESP32 core
