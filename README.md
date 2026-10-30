@@ -2,6 +2,8 @@
 
 Live MIPI-CSI camera video from an ESP32-P4 + Raspberry Pi Camera v2 (IMX219), compressed with the ESP32-P4's **hardware JPEG encoder** and streamed over **USB serial** — no Wi-Fi required. View it in a browser with zero installs, or in a Python/OpenCV window.
 
+> There is currently no Arduino library or ready-made option for using a Raspberry Pi Camera v2 with the ESP32-P4 — this project fills that gap with a self-contained sketch, a custom IMX219 driver, and viewers you can use right away.
+
 ![Streamed frame at 720p](docs/test_frame_720p_tuned.jpg)
 
 *A real frame streamed over USB at 720p, with ISP white balance and gain tuned for indoor lighting.*
@@ -54,7 +56,7 @@ The IMX219 sits at SCCB address `0x10`. If your board routes these differently, 
 ### 1. Clone
 
 ```sh
-git clone https://github.com/your-username/esp32-p4-cam-streamer.git
+git clone https://github.com/Munif-Khan/esp32-p4-cam-streamer.git
 cd esp32-p4-cam-streamer
 ```
 
