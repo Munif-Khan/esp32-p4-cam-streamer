@@ -2,20 +2,13 @@
 
 Live MIPI-CSI camera video from an ESP32-P4 + Raspberry Pi Camera v2 (IMX219), compressed with the ESP32-P4's **hardware JPEG encoder** and streamed over **USB serial** — no Wi-Fi required. View it in a browser with zero installs, or in a Python/OpenCV window.
 
-> There is currently no Arduino library or ready-made option for using a Raspberry Pi Camera v2 with the ESP32-P4 — this project fills that gap with a self-contained sketch, a custom IMX219 driver, and viewers you can use right away.
+### ESP32-P4 output vs phone reference
 
-![Streamed frame at 720p](docs/test_frame_720p_tuned.jpg)
+The same scene shot on a phone, next to a frame straight from the ESP32-P4 (720p, ISP-tuned):
 
-*A real frame streamed over USB at 720p, with ISP white balance and gain tuned for indoor lighting.*
-
-### Before / after ISP tuning
-
-Same scene, same firmware structure — the ISP tuning (white balance, gamma tone curve, denoise) applied:
-
-| Before | After |
+| Phone reference | ESP32-P4 stream |
 |---|---|
-| ![Before tuning](docs/before_tuning.jpg) | ![After tuning](docs/after_tuning.jpg) |
-| Purple/magenta cast (B/G = 1.48), crushed blacks (median luma 33), heavy chroma noise | Neutral color (B/G = 0.89), natural exposure (median luma 58), denoised shadows |
+| ![Phone reference photo](docs/reference_phone.jpg) | ![ESP32-P4 frame](docs/after_tuning.jpg) |
 
 ## Features
 
@@ -37,7 +30,12 @@ Same scene, same firmware structure — the ISP tuning (white balance, gamma ton
 
 ### Wiring
 
-The camera connects to the board's MIPI CSI connector (data/clock lanes are dedicated P4 CSI pins, not GPIOs). Only the control lines are regular GPIOs:
+The camera connects to the board's MIPI CSI connector (data/clock lanes are dedicated P4 CSI pins, not GPIOs).
+
+> [!IMPORTANT]
+> The board's FFC connector is oriented **opposite** to the Raspberry Pi's camera connector, so the stock ribbon cable does not line up pin-for-pin. The cable needs a small **fold**: bend it back on itself right at the board connector so the contacts flip to the matching orientation. Make one clean crease — no sharp kinks — so the traces don't crack.
+
+Only the control lines are regular GPIOs:
 
 | Camera control | ESP32-P4 GPIO | Defined in sketch as |
 |---|---|---|
@@ -143,7 +141,7 @@ All in `esp32p4_cam_test/esp32p4_cam_test.ino`:
 │   └── viewer.py              OpenCV desktop viewer
 ├── tools/
 │   └── capture.py             grab a single frame from the stream (for tuning)
-└── docs/                      sample frames + before/after tuning shots
+└── docs/                      sample frames + reference comparison shots
 ```
 
 ## License
